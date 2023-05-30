@@ -3,3 +3,4 @@
 .py_env
 .idea
 data_in
+.ipynb_checkpoints
