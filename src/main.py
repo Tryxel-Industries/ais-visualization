@@ -47,7 +47,6 @@ def parse_property(prop_dict: dict):
     prop_type = prop_dict["property_type"]
     prop_values = prop_dict["prop_values"]
 
-    print(prop_type)
     match prop_type:
         case "PopDimTypeMemberships":
             return _parse_enum_dict_prop(prop_values, prop_type, "DimTypeMembership")
@@ -56,9 +55,15 @@ def parse_property(prop_dict: dict):
             return _parse_enum_dict_prop(prop_values, prop_type, "LabelMembership")
 
         case "TestAccuracy":
-            return _parse_enum_dict_prop(prop_values, prop_type, "CorWrongNoReg")
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
         case "TrainAccuracy":
-            return _parse_enum_dict_prop(prop_values, prop_type, "CorWrongNoReg")
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
+        case "BoostAccuracy":
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
+        case "BoostAccuracyTest":
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
+        case "ScoreComponents":
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedFloats")
         case "AvgTrainScore":
             return _parse_single_v_prop(prop_values, prop_type)
         case _:
@@ -74,23 +79,44 @@ def gen_cor_w_noreg_cols(df: pd.DataFrame, key: str):
     df[f"{key}_accuracy"] = n_cor/(n_cor+n_wrong+n_no_reg)
 
 
-def parse_dataset(json_obj: dict) :
+def parse_iter_props(json_obj: dict):
     dataset_name = json_obj["dataset"]
 
     iter_props = json_obj["iter_props"]
 
     df_dict_list = []
     for fold in iter_props:
+        fold_df_dict_list = []
         for prop in fold:
-            df_dict_list.append(parse_property(prop))
+            fold_df_dict_list.append(parse_property(prop))
+        df_dict_list.append(fold_df_dict_list)
+
+
+    df_out_list = []
+    for fold_df_list in df_dict_list:
+        fold_df_list.sort()
+        df_dict = {}
+        for (key, prop_dict) in fold_df_list:
+            df_dict = {**df_dict, **prop_dict}
+        df_out_list.append(pd.DataFrame.from_dict(df_dict))
+    return df_out_list
+
+def parse_meta_props(json_obj: dict) :
+    dataset_name = json_obj["dataset"]
+
+    meta_props = json_obj["meta_props"]
+
+    df_dict_list = []
+    for prop in meta_props:
+        df_dict_list.append(parse_property(prop))
 
 
     df_dict_list.sort()
     df_dict = {}
     for (key, prop_dict) in df_dict_list:
         df_dict = {**df_dict, **prop_dict}
-    return pd.DataFrame.from_dict(df_dict)
 
+    return pd.DataFrame.from_dict(df_dict)
 
 def main():
     with open("data_in/test_dat.json", "r") as f:
