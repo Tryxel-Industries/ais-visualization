@@ -1,4 +1,5 @@
 import json
+import os
 
 import pandas as pd
 
@@ -66,6 +67,10 @@ def parse_property(prop_dict: dict):
             return _parse_enum_dict_prop(prop_values, prop_type, "MappedFloats")
         case "AvgTrainScore":
             return _parse_single_v_prop(prop_values, prop_type)
+        case "FoldAccuracy":
+            return _parse_enum_dict_prop(prop_values, prop_type, "MappedFloats")
+        case "Runtime":
+            return _parse_single_v_prop(prop_values, prop_type)
         case _:
             raise Exception("unconfigured prop type")
 
@@ -118,7 +123,36 @@ def parse_meta_props(json_obj: dict) :
 
     return pd.DataFrame.from_dict(df_dict)
 
+def get_some_sweet_meta_results(path: str, constraint: str = ""):
+    print(os.getcwd())
+    logs = os.listdir(path)
+    meta_concise = []
+    for log in logs:
+        if constraint not in log:
+            continue
+        full_path = path + "/" + log
+        print(full_path)
+        with open(full_path, "r") as f:
+            js_obj = json.load(f)
+            if not js_obj["meta_props"][0]["prop_values"]:
+                continue
+            loggy = parse_meta_props(js_obj)
+            print(js_obj["meta_props"][0]["prop_values"])
+            fold_test_std = loggy["FoldAccuracy_test"].std()
+            fold_train_std = loggy["FoldAccuracy_train"].std()
+
+            fold_test_mean = loggy["FoldAccuracy_test"].mean()
+            fold_train_mean = loggy["FoldAccuracy_train"].mean()
+
+            fold_rt_std = loggy["Runtime"].std()
+            fold_rt_mean = loggy["Runtime"].mean()
+            meta_concise.append([js_obj["dataset"], fold_test_mean, fold_test_std, fold_train_mean, fold_train_std, fold_rt_mean, fold_rt_std])
+    df = pd.DataFrame(meta_concise, columns=["Dataset", "FoldAccuracy_test", "FoldAccuracy_test_std", "FoldAccuracy_train", "FoldAccuracy_train_std", "Runtime", "Runtime_std"])
+    return df
 def main():
+    print(os.getcwd())
+    get_some_sweet_meta_results("./../ais/logg_dat")
+    exit()
     with open("data_in/test_dat.json", "r") as f:
         js_obj = json.load(f)
 
