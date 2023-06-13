@@ -1,9 +1,13 @@
 import json
 import os
+from pathlib import Path
+from typing import List
 
 import pandas as pd
 
-
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 class TestData:
     def __init__(self, dataset: str):
         self.dataset = dataset
@@ -149,6 +153,55 @@ def get_some_sweet_meta_results(path: str, constraint: str = ""):
             meta_concise.append([js_obj["dataset"], fold_test_mean, fold_test_std, fold_train_mean, fold_train_std, fold_rt_mean, fold_rt_std])
     df = pd.DataFrame(meta_concise, columns=["Dataset", "FoldAccuracy_test", "FoldAccuracy_test_std", "FoldAccuracy_train", "FoldAccuracy_train_std", "Runtime", "Runtime_std"])
     return df
+
+
+
+def plot_agg_vals(df_list: List[pd.DataFrame], prefix: str, file_pre: str):
+    cols = df_list[0].columns
+    fig = go.Figure()
+    markers = ["circle", "square", "diamond", "cross", "star", "triangle-up", "triangle-down", "triangle-left", "triangle-right"]
+    n = 0
+
+    col_type_map = {}
+    for col in cols:
+        if col.startswith(prefix):
+            col_type_map[col] = []
+
+    for df in df_list:
+        for (k,v) in col_type_map.items():
+            v.append(df[k])
+
+    for (k, v) in col_type_map.items():
+        #agg_df = pd.DataFrame(v)
+        agg_df = pd.concat(v,axis=1)
+        #display(agg_df)
+
+        mean_vals = agg_df.mean(axis=1)
+        std_vals = agg_df.std(axis=1)
+        #display(mean_vals)
+
+        fig.add_trace(go.Scatter(x=agg_df.index, y=mean_vals.ffill(),
+                            mode='lines+markers',
+                            name=k[len(prefix):],
+                            marker=dict(
+                                        symbol=markers[n],
+                                        size=8,
+                                        #angleref="previous",
+                                    ),
+                            error_y=dict(
+                                     type='data',  # value of error bar given in data coordinates
+                                     array=std_vals,
+                                     visible=True)
+                                 ))
+        n += 1
+
+    fig.update_layout(height = 500)
+    path = Path(f"../plots/{file_pre}/{prefix}")
+    if not path.is_dir():
+        path.mkdir(parents=True)
+    fig.write_image(f"../plots/{file_pre}/{prefix}/agg.png", scale=2)
+    fig.show()
+
 def main():
     print(os.getcwd())
     get_some_sweet_meta_results("./../ais/logg_dat")
