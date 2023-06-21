@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 from typing import List
-
+import numpy as np
 import pandas as pd
 
 import plotly.express as px
@@ -37,21 +37,45 @@ def _parse_enum_dict_prop(prop_values: dict, prop_type: str, enum_name: str):
 
     return (prop_type, df_dict)
 
+def _parse_boosting_info(prop_values: dict, prop_type: str, enum_name: str):
+    cols = {}
+    for p in prop_values:
+        if type(p) == str:
+            if len(cols) == 0:
+                continue
+            else:
+                for k, v in cols.items():
+                    v.append(pd.NA)
+        else:
+            memberships: dict = p[enum_name]
+            for k, v in memberships.items():
+                cur_val = cols.get(k)
+                if cur_val is None:
+                    cols[k] = [v]
+                else:
+                    cols[k].append(v)
 
-def _parse_single_v_prop(prop_values: dict, prop_type: str):
+    df_dict = {}
+    for k, v in cols.items():
+        # v = np.add.reduceat(v, np.arange(0, len(v), 5))
+        df_dict[f"{prop_type}_{k}"] = v
 
+    return (prop_type, df_dict)
+
+def _parse_single_v_prop(prop_values: dict, prop_type: str, boosting_rounds: int = 1):
     df_list = []
     for p in prop_values:
         if type(p) == str:
             df_list.append(pd.NA)
         else:
+            # v = np.add.reduceat(v, np.arange(0, len(v), 5))
             df_list.append(p["SingleValue"])
 
     return (prop_type, {prop_type: df_list})
 def parse_property(prop_dict: dict):
     prop_type = prop_dict["property_type"]
     prop_values = prop_dict["prop_values"]
-
+    boosting_rounds = 1
     match prop_type:
         case "PopDimTypeMemberships":
             return _parse_enum_dict_prop(prop_values, prop_type, "DimTypeMembership")
@@ -64,9 +88,10 @@ def parse_property(prop_dict: dict):
         case "TrainAccuracy":
             return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
         case "BoostAccuracy":
-            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
+            return _parse_boosting_info(prop_values, prop_type, "MappedInts")
         case "BoostAccuracyTest":
-            return _parse_enum_dict_prop(prop_values, prop_type, "MappedInts")
+            # boosting_rounds = len(prop_dict["BoostAccuracyTest"]) / len(prop_dict["TestAccuracy"])
+            return _parse_boosting_info(prop_values, prop_type, "MappedInts")
         case "ScoreComponents":
             return _parse_enum_dict_prop(prop_values, prop_type, "MappedFloats")
         case "AvgTrainScore":
@@ -74,7 +99,7 @@ def parse_property(prop_dict: dict):
         case "FoldAccuracy":
             return _parse_enum_dict_prop(prop_values, prop_type, "MappedFloats")
         case "Runtime":
-            return _parse_single_v_prop(prop_values, prop_type)
+            return _parse_single_v_prop(prop_values, prop_type, boosting_rounds=boosting_rounds)
         case _:
             raise Exception("unconfigured prop type")
 
@@ -114,29 +139,37 @@ def parse_meta_props(json_obj: dict) :
     dataset_name = json_obj["dataset"]
 
     meta_props = json_obj["meta_props"]
-
+    boosting_rounds = max(0, int(json_obj["params"]["boost"]))
     df_dict_list = []
+    num_folds = 1
     for prop in meta_props:
-        df_dict_list.append(parse_property(prop))
+        if prop["property_type"] == "FoldAccuracy":
+            num_folds = len(prop["prop_values"])
+        result = parse_property(prop)
+        df_dict_list.append(result)
 
 
     df_dict_list.sort()
     df_dict = {}
+    # num_folds = df_dict_list
     for (key, prop_dict) in df_dict_list:
+        for k, v in prop_dict.items():
+            if len(v) > num_folds:
+                prop_dict[k] = np.add.reduceat(v, np.arange(0, len(v), boosting_rounds))[:num_folds]
         df_dict = {**df_dict, **prop_dict}
 
     return pd.DataFrame.from_dict(df_dict)
 
 def get_some_sweet_meta_results(path: str, constraint: str = ""):
     print(os.getcwd())
-    logs = os.listdir(path)
+    logs = [os.path.join(path,f) for f in os.listdir(path) if os.path.isfile(os.path.join(path,f))]
     meta_concise = []
     for log in logs:
         if constraint not in log:
             continue
-        full_path = path + "/" + log
-        print(full_path)
-        with open(full_path, "r") as f:
+        # full_path = path + "/" + log
+        # print(full_path)
+        with open(log, "r") as f:
             js_obj = json.load(f)
             if not js_obj["meta_props"][0]["prop_values"]:
                 continue
@@ -150,32 +183,48 @@ def get_some_sweet_meta_results(path: str, constraint: str = ""):
 
             fold_rt_std = loggy["Runtime"].std()
             fold_rt_mean = loggy["Runtime"].mean()
-            meta_concise.append([js_obj["dataset"], fold_test_mean, fold_test_std, fold_train_mean, fold_train_std, fold_rt_mean, fold_rt_std])
-    df = pd.DataFrame(meta_concise, columns=["Dataset", "FoldAccuracy_test", "FoldAccuracy_test_std", "FoldAccuracy_train", "FoldAccuracy_train_std", "Runtime", "Runtime_std"])
+            print(js_obj["params"]["antigen_pop_size"]["Fraction"])
+            fold_rt_repl = js_obj["params"]["antigen_pop_size"]["Fraction"]
+            meta_concise.append([js_obj["dataset"], fold_test_mean, fold_test_std, fold_train_mean, fold_train_std, fold_rt_mean, fold_rt_std, fold_rt_repl])
+    df = pd.DataFrame(meta_concise, columns=["Dataset", "FoldAccuracy_test", "FoldAccuracy_test_std", "FoldAccuracy_train", "FoldAccuracy_train_std", "Runtime", "Runtime_std", "Pop_frac"])
     return df
 
+def write_image(fig, path_str:str, filename:str):
+    fig.update_layout(height = 500)
+    path = Path(f"../plots/{path_str}")
+    if not path.is_dir():
+        path.mkdir(parents=True)
+    fig.write_image(f"../plots/{path_str}/{filename}", scale=2)
 
 
-def plot_agg_vals(df_list: List[pd.DataFrame], prefix: str, file_pre: str):
+def plot_agg_vals(df_list: List[pd.DataFrame], prefix: str, file_pre: str, sample_rate: int = 1, first_n = None) -> go.Figure:
     cols = df_list[0].columns
     fig = go.Figure()
-    markers = ["circle", "square", "diamond", "cross", "star", "triangle-up", "triangle-down", "triangle-left", "triangle-right"]
+    markers = ["circle", "square", "diamond", "cross", "star", "triangle-up", "triangle-down", "triangle-left", "triangle-right", "asterisk", "hash", "diamond-x"]
     n = 0
 
     col_type_map = {}
     for col in cols:
-        if col.startswith(prefix):
+        # if col.startswith(prefix):
+        if prefix in col:
             col_type_map[col] = []
 
     for df in df_list:
         for (k,v) in col_type_map.items():
             v.append(df[k])
+            # a = df[k]
+            # if a is not None:
+            #     a  = a /a[0]
+            #     v.append(a)
 
     for (k, v) in col_type_map.items():
         #agg_df = pd.DataFrame(v)
         agg_df = pd.concat(v,axis=1)
         #display(agg_df)
-
+        # agg_df = agg_df[df.index % sample_rate == 0]
+        if first_n == None:
+                first_n = len(agg_df)
+        agg_df = agg_df.iloc[:first_n:sample_rate, :]
         mean_vals = agg_df.mean(axis=1)
         std_vals = agg_df.std(axis=1)
         #display(mean_vals)
@@ -194,15 +243,24 @@ def plot_agg_vals(df_list: List[pd.DataFrame], prefix: str, file_pre: str):
                                      visible=True)
                                  ))
         n += 1
-
+    return fig
     fig.update_layout(height = 500)
     path = Path(f"../plots/{file_pre}/{prefix}")
     if not path.is_dir():
         path.mkdir(parents=True)
+    # 
+    # fig.update_xaxes(range=[1.5, 4.5])
+    #fig.update_yaxes(range=[0.25, 0.405])
     fig.write_image(f"../plots/{file_pre}/{prefix}/agg.png", scale=2)
+ 
     fig.show()
 
 def main():
+    with open("./../ais/logg_dat/ex_boosting/logg_dat_Diabetes_boosting.json", "r") as f:
+        js_obj = json.load(f)
+    df_list = parse_iter_props(js_obj)
+    df = parse_meta_props(js_obj)
+    plot_agg_vals(df_list, "PopDimTypeMemberships_", "ajk")
     print(os.getcwd())
     get_some_sweet_meta_results("./../ais/logg_dat")
     exit()
